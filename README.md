@@ -1,24 +1,24 @@
 # vkbd
 
-Keyboard interception library for Linux using uinput.
-**Latency: ~0.2ms** (event detection 0.1ms + callback 0.01ms + uinput write 0.05ms)
+Keyboard interception library. Linux + uinput. Latency ~0.2ms.
 
-## Why
+Wayland blocks `/dev/input` access. This reads `/dev/input/event*` directly, forwards via uinput.
 
-Wayland's security model blocks direct evdev access. This library works around it by reading `/dev/input/event*` directly and forwarding through a virtual keyboard.
-
-## Requirements
-
-- Linux + uinput module
-- GCC
-- Root privileges
-
-## Build
+## Quick Start
 
 ```bash
+# Install
+sudo modprobe uinput
 make
+
+# Run
 sudo ./vkbd
+
+# Test (10s auto-stop)
+sudo sh test.sh
 ```
+
+**Requires:** Linux, uinput, GCC, root
 
 ## Usage
 
@@ -40,92 +40,44 @@ event_listener_run(&listener);
 
 ### vkbd.h
 
-```c
-int vkbd_init(vkbd_context_t *ctx, const char *device_name);
-```
-Initialize virtual keyboard device. Returns 0 on success, -1 on error.
-
-```c
-void vkbd_destroy(vkbd_context_t *ctx);
-```
-Cleanup and destroy virtual keyboard device.
-
-```c
-int vkbd_send_key(vkbd_context_t *ctx, uint16_t key_code, int32_t value);
-```
-Send key event. `value`: 0=release, 1=press, 2=repeat. Returns 0 on success.
-
-```c
-int vkbd_sync(vkbd_context_t *ctx);
-```
-Send synchronization event (EV_SYN).
-
-```c
-int vkbd_register_callback(vkbd_context_t *ctx, vkbd_callback_t callback, void *user_data);
-```
-Register event handler. Max 16 callbacks. Returns handler ID on success.
-
-```c
-int vkbd_unregister_callback(vkbd_context_t *ctx, int handler_id);
-```
-Unregister callback by handler ID.
-
-```c
-int vkbd_process_key(vkbd_context_t *ctx, uint16_t key_code, int32_t value);
-```
-Process key through all callbacks then forward to virtual device.
+| Function | Description |
+|----------|-------------|
+| `vkbd_init(ctx, name)` | Initialize. Returns 0/-1 |
+| `vkbd_destroy(ctx)` | Cleanup |
+| `vkbd_register_callback(ctx, cb, data)` | Add handler (max 16). Returns ID/-1 |
+| `vkbd_unregister_callback(ctx, id)` | Remove handler. Returns 0/-1 |
+| `vkbd_process_key(ctx, code, val)` | Process key. val: 0=release, 1=press, 2=repeat |
+| `vkbd_send_key(ctx, code, val)` | Send key directly |
+| `vkbd_sync(ctx)` | Send EV_SYN |
 
 ### event_listener.h
 
-```c
-int event_listener_init(event_listener_t *listener, vkbd_context_t *vkbd_ctx);
-```
-Initialize event listener. Links listener to virtual keyboard context.
-
-```c
-int event_listener_auto_detect(event_listener_t *listener);
-```
-Auto-detect and add all keyboard devices from `/dev/input/event*`.
-
-```c
-int event_listener_add_device(event_listener_t *listener, const char *device_path);
-```
-Add specific device to monitor (e.g., `/dev/input/event0`).
-
-```c
-int event_listener_run(event_listener_t *listener);
-```
-Start listening for events. Blocking call using epoll.
-
-```c
-void event_listener_stop(event_listener_t *listener);
-```
-Stop the event listener.
-
-```c
-void event_listener_destroy(event_listener_t *listener);
-```
-Cleanup and free resources.
-
-## Setup
-
-```bash
-# Load uinput module
-sudo modprobe uinput
-
-# Optional: auto-load on boot
-echo uinput | sudo tee /etc/modules-load.d/uinput.conf
-
-# Run setup script
-sudo sh setup.sh
-```
+| Function | Description |
+|----------|-------------|
+| `event_listener_init(listener, vkbd)` | Initialize |
+| `event_listener_auto_detect(listener)` | Find keyboards. Returns count/-1 |
+| `event_listener_add_device(listener, path)` | Add device manually |
+| `event_listener_run(listener)` | Start (blocking) |
+| `event_listener_stop(listener)` | Stop |
+| `event_listener_destroy(listener)` | Cleanup |
 
 ## Examples
 
-See `examples/` directory:
-- `simple_logger.c` - Basic key logging
-- `key_remapper.c` - Key remapping (Caps Lock → Escape)
+```bash
+make examples
+cd examples
+sudo ./simple_logger    # Log keys
+sudo ./key_remapper     # Remap Caps→Esc
+```
 
+Source: `examples/simple_logger.c`, `examples/key_remapper.c`
+
+## Setup
+
+Load uinput on boot:
+```bash
+echo uinput | sudo tee /etc/modules-load.d/uinput.conf
+```
 
 ## License
 
