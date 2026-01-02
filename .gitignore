@@ -1,0 +1,35 @@
+# .gitignore for Virtual Keyboard project
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.so.*
+vkbd
+vkbd_debug
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Debug files
+*.dSYM/
+*.su
+*.core
+vgcore.*
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
