@@ -1,9 +1,13 @@
 # Virtual Keyboard Makefile
-# Optimized for fast compilation and execution
+# Extreme performance optimization - MAXIMUM SPEED
 
 CC = gcc
-CFLAGS = -Wall -Wextra -O3 -march=native -flto -ffast-math
-LDFLAGS = -flto
+# Ultra aggressive optimization flags
+CFLAGS = -Wall -Wextra -Ofast -march=native -mtune=native -flto -ffast-math \
+         -funroll-loops -finline-functions -fomit-frame-pointer \
+         -fno-stack-protector -fprefetch-loop-arrays -ftree-vectorize \
+         -fno-plt -fno-semantic-interposition
+LDFLAGS = -flto -Wl,-O1 -Wl,--as-needed -Wl,--hash-style=gnu
 LIBS = 
 
 # Enable additional warnings for better code quality
@@ -76,10 +80,14 @@ examples: $(STATIC_LIB)
 	$(CC) $(CFLAGS) key_remapper.c -I.. -L.. -lvkbd -o key_remapper
 	@echo "Examples built successfully"
 
-# Run tests
+# Run automated tests
 test: $(TARGET)
-	@echo "Running tests..."
-	@sh test.sh
+	@echo "Building quick test..."
+	@cd test && $(CC) $(CFLAGS) quick_test.c ../vkbd.c -I.. -o quick_test 2>/dev/null || $(CC) -O2 quick_test.c ../vkbd.c -I.. -o quick_test
+	@echo ""
+	@echo "Running quick test (< 1 second)..."
+	@echo "=========================================="
+	@sudo test/quick_test
 
 # Install (requires root)
 install: $(TARGET) $(STATIC_LIB) $(SHARED_LIB)
@@ -107,6 +115,7 @@ clean:
 	rm -f $(STATIC_LIB) $(SHARED_LIB)
 	rm -f *.o
 	@cd examples 2>/dev/null && rm -f simple_logger key_remapper || true
+	@cd test 2>/dev/null && rm -f stress_test auto_test safe_test quick_test || true
 	@echo "Clean complete"
 
 # Dependencies
@@ -123,7 +132,7 @@ help:
 	@echo "  debug      - Build debug version with sanitizers"
 	@echo "  library    - Build static and shared libraries"
 	@echo "  examples   - Build example programs"
-	@echo "  test       - Run test suite"
+	@echo "  test       - Run automated stress tests"
 	@echo "  install    - Install to system (requires root)"
 	@echo "  uninstall  - Remove from system (requires root)"
 	@echo "  clean      - Remove all build files"
@@ -133,5 +142,9 @@ help:
 	@echo "  make              # Build optimized"
 	@echo "  make debug        # Build with debug symbols"
 	@echo "  make examples     # Build example programs"
-	@echo "  make test         # Run tests"
+	@echo "  make test         # Run stress tests"
 	@echo "  sudo make install # Install system-wide"
+	@echo ""
+	@echo "Testing:"
+	@echo "  make test                      # Safe automated test"
+	@echo "  cd test && sudo ./stress_test  # Interactive test"

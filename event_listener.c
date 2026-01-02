@@ -116,6 +116,14 @@ int event_listener_add_device(event_listener_t *listener, const char *device_pat
     char name[256] = "Unknown";
     ioctl(fd, EVIOCGNAME(sizeof(name)), name);
 
+    /* Skip our own virtual keyboard to prevent feedback loop */
+    if (strstr(name, "Virtual Keyboard") != NULL || 
+        (strstr(name, "Virtual") != NULL && strstr(name, "Keyboard") != NULL)) {
+        fprintf(stderr, "Skipping virtual keyboard: %s\n", name);
+        close(fd);
+        return -1;
+    }
+
     /* Grab device (exclusive access) */
     /* This prevents the original keyboard from sending events to other apps */
     /* Comment this out if you want to test without exclusive access */
@@ -125,9 +133,9 @@ int event_listener_add_device(event_listener_t *listener, const char *device_pat
         /* Continue anyway - useful for testing without breaking system input */
     }
 
-    /* Add to epoll */
+    /* Add to epoll with error detection */
     struct epoll_event ev;
-    ev.events = EPOLLIN;
+    ev.events = EPOLLIN | EPOLLERR | EPOLLHUP;
     ev.data.fd = fd;
 
     if (epoll_ctl(listener->epoll_fd, EPOLL_CTL_ADD, fd, &ev) < 0) {
@@ -206,11 +214,16 @@ int event_listener_run(event_listener_t *listener) {
     printf("Event listener started, monitoring %d device(s)\n", listener->device_count);
 
     struct epoll_event events[MAX_EVENTS];
+    /* Optimized event buffer - balance between speed and safety */
+    struct input_event ev_buffer[16];
+    int error_count = 0;
+    const int MAX_CONSECUTIVE_ERRORS = 100;
 
     while (listener->running) {
-        int nfds = epoll_wait(listener->epoll_fd, events, MAX_EVENTS, 100);
+        /* 1ms timeout for maximum responsiveness */
+        int nfds = epoll_wait(listener->epoll_fd, events, MAX_EVENTS, 1);
         
-        if (nfds < 0) {
+        if (__builtin_expect(nfds < 0, 0)) {
             if (errno == EINTR) {
                 continue;
             }
@@ -218,18 +231,62 @@ int event_listener_run(event_listener_t *listener) {
             return -1;
         }
 
-        /* Process events */
+        /* Hot path: process events with minimal overhead */
         for (int i = 0; i < nfds; i++) {
             int fd = events[i].data.fd;
-            struct input_event ev;
-
-            while (read(fd, &ev, sizeof(ev)) == sizeof(ev)) {
-                /* Only process key events */
-                if (ev.type == EV_KEY) {
-                    /* Forward to virtual keyboard */
-                    vkbd_process_key(listener->vkbd_ctx, ev.code, ev.value);
+            
+            /* Fast path: check for errors first (unlikely) */
+            if (__builtin_expect(events[i].events & (EPOLLERR | EPOLLHUP), 0)) {
+                fprintf(stderr, "Error on input device fd=%d\n", fd);
+                error_count++;
+                if (error_count > MAX_CONSECUTIVE_ERRORS) {
+                    fprintf(stderr, "Too many errors, stopping listener\n");
+                    listener->running = false;
+                    return -1;
                 }
-                /* Note: EV_SYN is sent by vkbd_process_key, no need to forward */
+                continue;
+            }
+            
+            ssize_t bytes_read = read(fd, ev_buffer, sizeof(ev_buffer));
+            
+            /* Error handling - unlikely path */
+            if (__builtin_expect(bytes_read <= 0, 0)) {
+                if (bytes_read < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        continue;
+                    }
+                    if (errno == ENODEV || errno == ENOENT) {
+                        epoll_ctl(listener->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
+                        close(fd);
+                        continue;
+                    }
+                    error_count++;
+                } else {
+                    /* EOF - device disconnected */
+                    epoll_ctl(listener->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
+                    close(fd);
+                }
+                continue;
+            }
+            
+            /* Validate read size - fast check */
+            if (__builtin_expect((bytes_read % sizeof(struct input_event)) != 0, 0)) {
+                error_count++;
+                continue;
+            }
+            
+            /* Reset error count on successful read */
+            error_count = 0;
+            
+            /* Hot path: process events inline */
+            int num_events = bytes_read / sizeof(struct input_event);
+            for (int j = 0; j < num_events; j++) {
+                /* Only key events - most common case */
+                if (__builtin_expect(ev_buffer[j].type == EV_KEY, 1)) {
+                    vkbd_process_key(listener->vkbd_ctx, 
+                                   ev_buffer[j].code, 
+                                   ev_buffer[j].value);
+                }
             }
         }
     }

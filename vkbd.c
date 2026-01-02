@@ -11,7 +11,18 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/socket.h>
 #include <linux/input.h>
+
+/* Write event with retry on EINTR */
+static inline int write_event(int fd, const struct input_event *ev) {
+    ssize_t ret;
+    do {
+        ret = write(fd, ev, sizeof(*ev));
+    } while (ret < 0 && errno == EINTR);
+    
+    return (ret == sizeof(*ev)) ? 0 : -1;
+}
 
 /* Initialize virtual keyboard device */
 int vkbd_init(vkbd_context_t *ctx, const char *device_name) {
@@ -49,7 +60,7 @@ int vkbd_init(vkbd_context_t *ctx, const char *device_name) {
     }
 
     /* Enable all keyboard keys (0-255 covers most keyboard keys) */
-    for (int i = 0; i < 256; i++) {
+    for (int i = 0; i < MAX_KEY_CODES; i++) {
         if (ioctl(ctx->device.fd, UI_SET_KEYBIT, i) < 0) {
             /* Some keys may not be supported, continue anyway */
         }
@@ -123,7 +134,7 @@ int vkbd_send_key(vkbd_context_t *ctx, uint16_t key_code, int32_t value) {
     /* Get current time for event timestamp */
     gettimeofday(&ev.time, NULL);
 
-    if (write(ctx->device.fd, &ev, sizeof(ev)) != sizeof(ev)) {
+    if (write_event(ctx->device.fd, &ev) < 0) {
         perror("vkbd_send_key: Failed to write key event");
         return -1;
     }
@@ -147,7 +158,7 @@ int vkbd_sync(vkbd_context_t *ctx) {
     
     gettimeofday(&ev.time, NULL);
 
-    if (write(ctx->device.fd, &ev, sizeof(ev)) != sizeof(ev)) {
+    if (write_event(ctx->device.fd, &ev) < 0) {
         perror("vkbd_sync: Failed to write sync event");
         return -1;
     }
@@ -197,30 +208,71 @@ int vkbd_unregister_callback(vkbd_context_t *ctx, int handler_id) {
     return 0;
 }
 
-/* Process and forward key event */
+/* Process and forward key event - Maximum speed with robust error handling */
 int vkbd_process_key(vkbd_context_t *ctx, uint16_t key_code, int32_t value) {
-    if (!ctx || !ctx->device.initialized) {
-        fprintf(stderr, "vkbd_process_key: Device not initialized\n");
+    /* Fast path: assume valid context (hot path optimization) */
+    if (__builtin_expect(!ctx || !ctx->device.initialized, 0)) {
         return -1;
     }
 
-    /* Call all registered callbacks */
-    for (int i = 0; i < ctx->handler_count; i++) {
-        if (ctx->handlers[i].active && ctx->handlers[i].callback) {
+    /* Inline callback processing - no function calls */
+    const int count = ctx->handler_count;
+    for (int i = 0; i < count; i++) {
+        if (ctx->handlers[i].active) {
             ctx->handlers[i].callback(key_code, value, ctx->handlers[i].user_data);
         }
     }
 
-    /* Forward to virtual device */
-    if (vkbd_send_key(ctx, key_code, value) < 0) {
+    /* Pre-allocated events on stack - no heap allocation */
+    struct input_event events[2];
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    
+    /* Key event */
+    events[0].time = now;
+    events[0].type = EV_KEY;
+    events[0].code = key_code;
+    events[0].value = value;
+    
+    /* Sync event */
+    events[1].time = now;
+    events[1].type = EV_SYN;
+    events[1].code = SYN_REPORT;
+    events[1].value = 0;
+    
+    /* Single atomic write - retry on EINTR or EAGAIN */
+    ssize_t ret;
+    int retry = 0;
+    do {
+        ret = write(ctx->device.fd, events, sizeof(events));
+        if (ret == sizeof(events)) {
+            return 0;  /* Success */
+        }
+        /* Retry on interrupt or would-block */
+        if (ret < 0 && (errno == EINTR || errno == EAGAIN)) {
+            if (++retry > 10) {
+                /* Too many retries - buffer might be full from key repeat */
+                usleep(100);  /* 0.1ms backoff */
+                if (retry > 100) {
+                    break;  /* Give up after 100 retries */
+                }
+            }
+            continue;
+        }
+        /* Other errors - fail immediately */
+        break;
+    } while (1);
+    
+    /* Log error only if write completely failed */
+    if (__builtin_expect(ret < 0, 0)) {
+        static int error_logged = 0;
+        if (!error_logged) {
+            perror("vkbd_process_key: write failed");
+            error_logged = 1;  /* Prevent log spam */
+        }
         return -1;
     }
-
-    /* Send sync event */
-    if (vkbd_sync(ctx) < 0) {
-        return -1;
-    }
-
+    
     return 0;
 }
 

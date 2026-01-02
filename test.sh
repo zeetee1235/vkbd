@@ -74,14 +74,31 @@ read -r response
 if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
     echo ""
     printf "${GREEN}=== Starting Virtual Keyboard ===${NC}\n"
-    echo "Press Ctrl+C to exit"
+    printf "${YELLOW}Auto-timeout in 10 seconds${NC}\n"
+    echo "Press Ctrl+C to exit early"
     echo ""
     sleep 1
     
+    # Run with 10 second timeout
     if [ "$(id -u)" -eq 0 ]; then
-        ./vkbd
+        timeout 10 ./vkbd &
+        PID=$!
     else
-        sudo ./vkbd
+        sudo timeout 10 ./vkbd &
+        PID=$!
+    fi
+    
+    # Wait for timeout or manual interrupt
+    wait $PID 2>/dev/null
+    EXIT_CODE=$?
+    
+    echo ""
+    if [ $EXIT_CODE -eq 124 ]; then
+        printf "${GREEN}✓ Test completed (timeout)${NC}\n"
+    elif [ $EXIT_CODE -eq 0 ]; then
+        printf "${GREEN}✓ Test completed successfully${NC}\n"
+    else
+        printf "${RED}✗ Test failed (exit code: $EXIT_CODE)${NC}\n"
     fi
 else
     echo "Run manually: sudo ./vkbd"

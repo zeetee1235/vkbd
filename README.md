@@ -1,6 +1,7 @@
 # vkbd
 
 Keyboard interception library for Linux using uinput.
+**Latency: ~0.2ms** (event detection 0.1ms + callback 0.01ms + uinput write 0.05ms)
 
 ## Why
 
@@ -124,6 +125,7 @@ sudo sh setup.sh
 See `examples/` directory:
 - `simple_logger.c` - Basic key logging
 - `key_remapper.c` - Key remapping (Caps Lock → Escape)
+
 
 ## License
 

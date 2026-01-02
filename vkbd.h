@@ -15,6 +15,9 @@
 /* Maximum number of callback handlers */
 #define MAX_CALLBACKS 16
 
+/* Maximum number of key codes to enable */
+#define MAX_KEY_CODES 256
+
 /* Virtual keyboard device structure */
 typedef struct {
     int fd;                          /* uinput device file descriptor */
@@ -100,7 +103,7 @@ int vkbd_unregister_callback(vkbd_context_t *ctx, int handler_id);
  * @param value Key state (0=release, 1=press, 2=repeat)
  * @return 0 on success, -1 on error
  */
-int vkbd_process_key(vkbd_context_t *ctx, uint16_t key_code, int32_t value);
+int vkbd_process_key(vkbd_context_t *ctx, uint16_t key_code, int32_t value) __attribute__((hot));
 
 /**
  * Get device file descriptor (for epoll/select integration)
